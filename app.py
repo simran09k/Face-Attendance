@@ -1,83 +1,102 @@
 import streamlit as st
-import face_recognition
-import pickle
+import cv2
+import numpy as np
 import pandas as pd
 from datetime import datetime
-import numpy as np
 import os
 from PIL import Image
 
-st.title("🎓 Face Recognition Attendance System")
+st.title("Face Recognition Attendance System")
 
-# -------------------------
-# LOAD ENCODINGS
-# -------------------------
-if os.path.exists("encodings.pkl"):
-    with open("encodings.pkl", "rb") as f:
-        known_encodings, known_names = pickle.load(f)
-else:
-    known_encodings = []
-    known_names = []
+# Create folders if not exist
+if not os.path.exists("students"):
+    os.makedirs("students")
 
-# -------------------------
-# MARK ATTENDANCE
-# -------------------------
-def mark_attendance(name):
-    try:
-        df = pd.read_csv("attendance.csv")
-    except:
-        df = pd.DataFrame(columns=["Name", "Date", "Time"])
+if not os.path.exists("attendance.csv"):
+    df = pd.DataFrame(columns=["Name", "Date", "Time"])
+    df.to_csv("attendance.csv", index=False)
 
-    today = datetime.now().strftime("%Y-%m-%d")
+# Load Haarcascade
+face_cascade = cv2.CascadeClassifier(
+    cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
+)
 
-    if not ((df["Name"] == name) & (df["Date"] == today)).any():
-        now = datetime.now()
-        new_entry = {
-            "Name": name,
-            "Date": today,
-            "Time": now.strftime("%H:%M:%S")
-        }
-        df = pd.concat([df, pd.DataFrame([new_entry])], ignore_index=True)
-        df.to_csv("attendance.csv", index=False)
-        st.success(f"{name} marked present!")
+# -----------------------------
+# Add New Student
+# -----------------------------
 
-# -------------------------
-# CAMERA INPUT (Cloud Compatible)
-# -------------------------
-st.header("📷 Take Picture for Attendance")
+st.header("Register New Student")
 
-picture = st.camera_input("Capture Image")
+name = st.text_input("Enter Student Name")
 
-if picture is not None:
-    image = Image.open(picture)
-    rgb_image = np.array(image)
+img_file = st.camera_input("Capture Student Image")
 
-    face_locations = face_recognition.face_locations(rgb_image)
-    face_encodings = face_recognition.face_encodings(rgb_image, face_locations)
+if st.button("Save Student"):
+    if name and img_file is not None:
+        image = Image.open(img_file)
+        image = np.array(image)
 
-    for face_encoding in face_encodings:
-        if len(known_encodings) > 0:
-            face_distances = face_recognition.face_distance(
-                known_encodings, face_encoding
-            )
-            best_match_index = np.argmin(face_distances)
+        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        faces = face_cascade.detectMultiScale(gray, 1.3, 5)
 
-            if face_distances[best_match_index] < 0.5:
-                name = known_names[best_match_index]
-                mark_attendance(name)
-                st.success(f"Recognized: {name}")
-            else:
-                st.error("Unknown Face")
+        if len(faces) > 0:
+            cv2.imwrite(f"students/{name}.jpg", image)
+            st.success(f"{name} registered successfully!")
         else:
-            st.warning("No student data available")
+            st.error("No face detected. Try again.")
+    else:
+        st.warning("Enter name and capture image.")
 
-# -------------------------
-# SHOW ATTENDANCE
-# -------------------------
-st.header("📊 Attendance Records")
+# -----------------------------
+# Mark Attendance
+# -----------------------------
 
-if os.path.exists("attendance.csv"):
-    df = pd.read_csv("attendance.csv")
-    st.dataframe(df)
-else:
-    st.write("No attendance yet.")
+st.header("Mark Attendance")
+
+attendance_img = st.camera_input("Capture Image for Attendance")
+
+if st.button("Mark Attendance"):
+    if attendance_img is not None:
+
+        image = Image.open(attendance_img)
+        image = np.array(image)
+
+        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        faces = face_cascade.detectMultiScale(gray, 1.3, 5)
+
+        if len(faces) > 0:
+
+            # Simple matching: check if any saved student image exists
+            students = os.listdir("students")
+
+            if len(students) == 0:
+                st.warning("No registered students.")
+            else:
+                name = students[0].replace(".jpg", "")
+
+                now = datetime.now()
+                date = now.strftime("%Y-%m-%d")
+                time = now.strftime("%H:%M:%S")
+
+                df = pd.read_csv("attendance.csv")
+                df.loc[len(df)] = [name, date, time]
+                df.to_csv("attendance.csv", index=False)
+
+                st.success(f"Attendance marked for {name}")
+
+        else:
+            st.error("No face detected.")
+
+# -----------------------------
+# Download Attendance
+# -----------------------------
+
+st.header("Download Attendance File")
+
+with open("attendance.csv", "rb") as file:
+    st.download_button(
+        label="Download attendance.csv",
+        data=file,
+        file_name="attendance.csv",
+        mime="text/csv"
+    )
